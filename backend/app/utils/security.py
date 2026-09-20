@@ -8,7 +8,8 @@ from passlib.context import CryptContext
 
 from app.utils.config import Settings, get_settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Use pbkdf2_sha256 instead of bcrypt to avoid 72-byte limit issues
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 class InvalidTokenError(ValueError):
@@ -16,9 +17,6 @@ class InvalidTokenError(ValueError):
 
 
 def hash_password(password: str) -> str:
-    # bcrypt has a 72-byte limit; truncate if needed
-    if len(password.encode("utf-8")) > 72:
-        password = password[:72]
     return pwd_context.hash(password)
 
 
