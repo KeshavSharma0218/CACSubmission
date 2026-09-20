@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # --- Database -----------------------------------------------------------------
     # Async DSN, e.g. postgresql+asyncpg://safewalk:password@db:5432/safewalk
+    # For Supabase, add ?sslmode=require to the URL
     database_url: PostgresDsn = Field(
         default=PostgresDsn("postgresql+asyncpg://safewalk:safewalk@localhost:5432/safewalk")
     )
@@ -51,28 +52,21 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
 
     # --- Auth (JWT) -----------------------------------------------------------
-    # Authentication isn't wired into any endpoint yet, but the settings exist now so
-    # adding it later doesn't require touching the config layer.
     jwt_secret_key: str = Field(default="dev-only-insecure-secret-change-me")
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60 * 24
 
     # --- OpenStreetMap-family services -----------------------------------------
-    # Nominatim enforces a strict usage policy (max 1 req/sec on the public instance,
-    # a required identifying User-Agent, and a ban on bulk/systematic queries). We
-    # expose the base URL as config so a self-hosted or commercial instance can be
-    # swapped in for production without touching the geocoding service code.
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
     nominatim_user_agent: str = "SafeWalk/0.1 (contact: set-a-real-contact-email)"
     nominatim_min_request_interval_seconds: float = 1.0
 
-    # Overpass is used to pull sidewalks, crossings, streetlights, and pedestrian
-    # paths. The public instance is not meant for scheduled/bulk workloads, so this
-    # is deliberately overridable to point at a self-hosted instance in production.
     overpass_base_url: str = "https://overpass-api.de/api/interpreter"
     overpass_timeout_seconds: int = 180
 
     # OSRM is the routing engine for candidate walking routes, scored by SafeWalk.
+    # Public instance: https://router.project-osrm.org (rate-limited)
+    # For production, self-host OSRM or use a commercial provider.
     osrm_base_url: str = "https://router.project-osrm.org"
     osrm_profile: str = "foot"
     max_route_alternatives: int = 10
@@ -102,8 +96,6 @@ class Settings(BaseSettings):
     flood_provider: Literal["none", "fema"] = "fema"
 
     # --- Crime data (provider-agnostic; concrete providers implement an interface) -
-    # No default provider is set because crime data sources are municipal and vary
-    # per city (Socrata/SODA portals, custom city APIs, etc.).
     crime_data_provider: str | None = None
     crime_data_api_key: str | None = None
     crime_data_base_url: str | None = None
@@ -129,6 +121,15 @@ class Settings(BaseSettings):
         if isinstance(v, str) and v.startswith("postgresql://"):
             return v.replace("postgresql://", "postgresql+asyncpg://", 1)
         return v
+
+    @property
+    def database_url_with_ssl(self) -> str:
+        """Return database URL with SSL mode for Supabase/managed Postgres."""
+        url = str(self.database_url)
+        if "supabase.co" in url and "sslmode" not in url:
+            separator = "&" if "?" in url else "?"
+            return f"{url}{separator}sslmode=require"
+        return url
 
 
 @lru_cache

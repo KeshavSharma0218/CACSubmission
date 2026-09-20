@@ -33,7 +33,6 @@ from app.utils.config import get_settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
 settings = get_settings()
 
 
@@ -42,8 +41,10 @@ class Base(DeclarativeBase):
 
 
 def _build_engine() -> AsyncEngine:
+    # Use SSL-enabled URL for Supabase/managed Postgres
+    db_url = settings.database_url_with_ssl
     return create_async_engine(
-        str(settings.database_url),
+        db_url,
         echo=settings.db_echo,
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,

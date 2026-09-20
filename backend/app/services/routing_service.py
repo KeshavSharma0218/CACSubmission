@@ -5,13 +5,16 @@ A* provider. SafeWalk currently generates a small candidate list through OSRM an
 then scores those candidates in `route_safety_service.py`.
 """
 
+import logging
 from dataclasses import dataclass, field
 
 import httpx
 
 from app.database.schemas import Coordinate
 from app.utils.config import Settings, get_settings
-from app.utils.http_client import get_json
+from app.utils.http_client import get_json, UpstreamServiceError
+
+logger = logging.getLogger(__name__)
 
 
 class NoRouteError(RuntimeError):
@@ -43,25 +46,45 @@ class OSRMRoutingProvider:
         configured_profile = self.settings.osrm_profile or profile or "foot"
         url = f"{self.settings.osrm_base_url.rstrip('/')}/route/v1/{configured_profile}/{start.lon},{start.lat};{end.lon},{end.lat}"
         desired = max(2, min(10, self.settings.max_route_alternatives))
-        data = await get_json(
-            self.client,
-            url,
-            params={
-                "overview": "full",
-                "geometries": "geojson",
-                "alternatives": str(desired - 1),
-            },
-            retries=self.settings.http_max_retries,
-        )
-        if data.get("code") != "Ok" or not data.get("routes"):
+        
+        try:
+            data = await get_json(
+                self.client,
+                url,
+                params={
+                    "overview": "full",
+                    "geometries": "geojson",
+                    "alternatives": str(desired - 1),
+                },
+                retries=self.settings.http_max_retries,
+            )
+        except UpstreamServiceError as exc:
+            logger.error("osrm_request_failed", error=str(exc), url=url)
+            raise NoRouteError("Routing service is temporarily unavailable.") from exc
+
+        # Check OSRM response code
+        code = data.get("code")
+        if code != "Ok":
+            message = data.get("message", "Unknown error")
+            logger.warning("osrm_returned_error", code=code, message=message)
+            if code == "NoRoute":
+                raise NoRouteError("No route connects those points.")
+            if code == "NoSegment":
+                raise NoRouteError("No road segment found near the given coordinates.")
+            raise NoRouteError(f"Routing failed: {message}")
+
+        routes = data.get("routes")
+        if not routes:
             raise NoRouteError("No route connects those points.")
+
+        logger.info("osrm_routes_found", count=len(routes))
         return [
             RouteResult(
                 [Coordinate(lat=p[1], lon=p[0]) for p in route["geometry"]["coordinates"]],
                 float(route["distance"]),
                 float(route["duration"]),
             )
-            for route in data["routes"]
+            for route in routes
         ]
 
 
