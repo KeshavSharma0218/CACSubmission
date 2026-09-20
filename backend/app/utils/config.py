@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # --- Database -----------------------------------------------------------------
     # Async DSN, e.g. postgresql+asyncpg://safewalk:password@db:5432/safewalk
-    # For Supabase, add ?sslmode=require to the URL
+    # For Supabase, the database.py handles SSL via connect_args
     database_url: PostgresDsn = Field(
         default=PostgresDsn("postgresql+asyncpg://safewalk:safewalk@localhost:5432/safewalk")
     )
@@ -121,15 +121,6 @@ class Settings(BaseSettings):
         if isinstance(v, str) and v.startswith("postgresql://"):
             return v.replace("postgresql://", "postgresql+asyncpg://", 1)
         return v
-
-    @property
-    def database_url_with_ssl(self) -> str:
-        """Return database URL with SSL mode for Supabase/managed Postgres."""
-        url = str(self.database_url)
-        if "supabase.co" in url and "sslmode" not in url:
-            separator = "&" if "?" in url else "?"
-            return f"{url}{separator}sslmode=require"
-        return url
 
 
 @lru_cache

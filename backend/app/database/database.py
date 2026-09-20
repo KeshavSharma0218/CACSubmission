@@ -41,14 +41,24 @@ class Base(DeclarativeBase):
 
 
 def _build_engine() -> AsyncEngine:
-    # Use SSL-enabled URL for Supabase/managed Postgres
-    db_url = settings.database_url_with_ssl
+    """Build async engine with proper SSL config for Supabase/managed Postgres."""
+    db_url = str(settings.database_url)
+    
+    # For Supabase, we need to pass sslmode via connect_args, not as query param
+    connect_args = {}
+    if "supabase.co" in db_url:
+        connect_args["ssl"] = "require"
+        # Remove sslmode from URL if present (asyncpg doesn't support it in DSN)
+        if "sslmode=" in db_url:
+            db_url = db_url.split("?")[0]
+    
     return create_async_engine(
         db_url,
         echo=settings.db_echo,
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
         pool_pre_ping=True,  # avoids using a dead connection after DB restarts/idles
+        connect_args=connect_args,
     )
 
 
