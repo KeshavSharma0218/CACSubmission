@@ -30,14 +30,14 @@ class UserRead(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=72)  # bcrypt max 72 bytes
+    password: str = Field(min_length=8, max_length=72)
     display_name: str | None = Field(default=None, max_length=120)
     phone_number: str | None = Field(default=None, max_length=30)
 
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=72)  # bcrypt max 72 bytes
+    password: str = Field(min_length=8, max_length=72)
 
 
 class TokenResponse(BaseModel):
@@ -93,6 +93,7 @@ class UserReportCreate(BaseModel):
 
 
 class UserReportRead(UserReportCreate):
+    model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     user_id: uuid.UUID | None
     created_at: datetime

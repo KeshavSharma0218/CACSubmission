@@ -7,6 +7,7 @@ Default base URL: http://localhost:8000/api/v1
 import argparse
 import asyncio
 import httpx
+from datetime import datetime, timezone, timedelta
 
 
 async def test_endpoint(name: str, method: str, path: str, expected: int, client: httpx.AsyncClient, base_url: str, **kwargs):
@@ -116,25 +117,31 @@ async def main():
             
             # 6. Safe Walk
             print("\n--- Safe Walk ---")
-            ok, data = await test_endpoint("Start Walk", "POST", "/safe-walk/start", 201, client, base_url,
-                json={"destination": {"lat": 40.7829, "lon": -73.9654}, "expected_arrival_minutes": 30}, headers=headers)
-            results.append(("Start Walk", ok))
-            session_id = data.get("id") if ok else None
-            
-            if session_id:
-                ok, data = await test_endpoint("Update Location", "POST", f"/safe-walk/{session_id}/update", 200, client, base_url,
-                    json={"location": {"lat": 40.7600, "lon": -73.9800}}, headers=headers)
-                results.append(("Update Location", ok))
+            if 'TEST_START' in locals():
+                start_time = datetime.now(timezone.utc) + timedelta(minutes=1)
+                ok, data = await test_endpoint("Start Walk", "POST", "/safe-walk/start", 201, client, base_url,
+                    json={
+                        "start_location": TEST_START,
+                        "destination": {"lat": 40.7829, "lon": -73.9654},
+                        "expected_arrival_at": start_time.isoformat()
+                    }, headers=headers)
+                results.append(("Start Walk", ok))
+                session_id = data.get("id") if ok else None
                 
-                ok, data = await test_endpoint("Active Walk", "GET", "/safe-walk/active", 200, client, base_url, headers=headers)
-                results.append(("Active Walk", ok))
-                
-                ok, data = await test_endpoint("Stop Walk", "POST", f"/safe-walk/{session_id}/stop", 200, client, base_url, headers=headers)
-                results.append(("Stop Walk", ok))
+                if session_id:
+                    ok, data = await test_endpoint("Update Location", "POST", f"/safe-walk/{session_id}/update", 200, client, base_url,
+                        json={"location": {"lat": 40.7600, "lon": -73.9800}}, headers=headers)
+                    results.append(("Update Location", ok))
+                    
+                    ok, data = await test_endpoint("Active Walk", "GET", "/safe-walk/active", 200, client, base_url, headers=headers)
+                    results.append(("Active Walk", ok))
+                    
+                    ok, data = await test_endpoint("Stop Walk", "POST", f"/safe-walk/{session_id}/stop", 200, client, base_url, headers=headers)
+                    results.append(("Stop Walk", ok))
             
             # 7. Reports
             print("\n--- Reports ---")
-            ok, data = await test_endpoint("Create Report", "POST", "/reports", 201, client, base_url,
+            ok, data = await test_endpoint("Create Report (auth)", "POST", "/reports", 201, client, base_url,
                 json={"location": {"lat": 40.7580, "lon": -73.9855}, "report_type": "poor_lighting", "description": "Dark street"}, headers=headers)
             results.append(("Create Report (auth)", ok))
             
