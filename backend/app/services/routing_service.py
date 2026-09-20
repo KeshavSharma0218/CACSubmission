@@ -59,14 +59,14 @@ class OSRMRoutingProvider:
                 retries=self.settings.http_max_retries,
             )
         except UpstreamServiceError as exc:
-            logger.error("osrm_request_failed", error=str(exc), url=url)
+            logger.error("osrm_request_failed", extra={"error": str(exc), "url": url})
             raise NoRouteError("Routing service is temporarily unavailable.") from exc
 
         # Check OSRM response code
         code = data.get("code")
         if code != "Ok":
             message = data.get("message", "Unknown error")
-            logger.warning("osrm_returned_error", code=code, message=message)
+            logger.warning("osrm_returned_error", extra={"code": code, "message": message})
             if code == "NoRoute":
                 raise NoRouteError("No route connects those points.")
             if code == "NoSegment":
@@ -77,7 +77,7 @@ class OSRMRoutingProvider:
         if not routes:
             raise NoRouteError("No route connects those points.")
 
-        logger.info("osrm_routes_found", count=len(routes))
+        logger.info("osrm_routes_found", extra={"count": len(routes)})
         return [
             RouteResult(
                 [Coordinate(lat=p[1], lon=p[0]) for p in route["geometry"]["coordinates"]],

@@ -10,7 +10,7 @@ from app.database.repositories import UserReportRepository
 from app.database.schemas import UserReportCreate, UserReportRead
 from app.utils.security import InvalidTokenError, decode_access_token
 
-router = APIRouter(tags=["reports"])
+router = APIRouter(prefix="/reports", tags=["reports"])
 
 
 def optional_user_id(authorization: str | None = Header(default=None)) -> uuid.UUID | None:
@@ -23,7 +23,7 @@ def optional_user_id(authorization: str | None = Header(default=None)) -> uuid.U
 
 
 @router.post(
-    "/report",
+    "",
     response_model=UserReportRead,
     status_code=201,
     summary="Submit a hazard report",

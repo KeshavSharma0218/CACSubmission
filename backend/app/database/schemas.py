@@ -30,14 +30,14 @@ class UserRead(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=8, max_length=72)  # bcrypt max 72 bytes
     display_name: str | None = Field(default=None, max_length=120)
     phone_number: str | None = Field(default=None, max_length=30)
 
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=8, max_length=72)  # bcrypt max 72 bytes
 
 
 class TokenResponse(BaseModel):
