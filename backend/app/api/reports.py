@@ -36,15 +36,22 @@ async def create_report(
 ) -> UserReportRead:
     item = await UserReportRepository(db).create(payload, user_id)
     await db.commit()
-    return UserReportRead(
-        id=item.id,
-        user_id=item.user_id,
-        location=payload.location,
-        report_type=item.report_type,
-        description=item.description,
-        created_at=item.created_at,
-        status=item.status,
-    )
+    return UserReportRead.model_validate(item)
+
+
+# Alias for backward compatibility - /report (singular)
+@router.post(
+    "/report",
+    response_model=UserReportRead,
+    status_code=201,
+    include_in_schema=False,
+)
+async def create_report_alias(
+    payload: UserReportCreate,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID | None = Depends(optional_user_id),
+) -> UserReportRead:
+    return await create_report(payload, db, user_id)
 
 
 @router.get(
