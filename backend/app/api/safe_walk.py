@@ -2,13 +2,16 @@
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from geoalchemy2.shape import to_shape
 
 from app.database.database import get_db
 from app.database.repositories import SafeWalkLocationRepository, SafeWalkSessionRepository
 from app.database.schemas import (
+    Coordinate,
     SafeWalkRead,
     SafeWalkStartRequest,
     SafeWalkUpdateRequest,
@@ -31,6 +34,31 @@ async def get_current_user_id(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
 
 
+def _session_to_read(session: Any) -> SafeWalkRead:
+    """Convert DB model (with WKBElement) to SafeWalkRead (with Coordinate)."""
+    dest = None
+    if session.destination is not None:
+        geom = to_shape(session.destination)
+        dest = Coordinate(lat=geom.y, lon=geom.x)
+    
+    last_loc = None
+    if session.last_location is not None:
+        geom = to_shape(session.last_location)
+        last_loc = Coordinate(lat=geom.y, lon=geom.x)
+    
+    return SafeWalkRead(
+        id=session.id,
+        user_id=session.user_id,
+        status=session.status,
+        destination=dest,
+        last_location=last_loc,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        last_updated_at=session.last_updated_at,
+        expected_arrival_at=session.expected_arrival_at,
+    )
+
+
 @router.post(
     "/start",
     response_model=SafeWalkRead,
@@ -51,7 +79,7 @@ async def start_walk(
 
     session = await repo.create_for_user(user_id, request)
     await db.commit()
-    return SafeWalkRead.model_validate(session)
+    return _session_to_read(session)
 
 
 @router.post(
@@ -80,7 +108,7 @@ async def update_location(
     await loc_repo.create(session_id, request.location)
 
     await db.commit()
-    return SafeWalkRead.model_validate(session)
+    return _session_to_read(session)
 
 
 @router.post(
@@ -105,7 +133,7 @@ async def stop_walk(
     session.ended_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
-    return SafeWalkRead.model_validate(session)
+    return _session_to_read(session)
 
 
 @router.get(
@@ -122,7 +150,7 @@ async def get_active(
     session = await repo.active_for_user(user_id)
     if not session:
         return None
-    return SafeWalkRead.model_validate(session)
+    return _session_to_read(session)
 
 
 @router.get(
@@ -140,4 +168,4 @@ async def get_session(
     session = await repo.get_for_user(user_id, session_id)
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    return SafeWalkRead.model_validate(session)
+    return _session_to_read(session)

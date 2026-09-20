@@ -1,13 +1,15 @@
 """Crowdsourced hazard report endpoint with optional, non-enforcing JWT identity."""
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from geoalchemy2.shape import to_shape
 
 from app.database.database import get_db
 from app.database.repositories import UserReportRepository
-from app.database.schemas import UserReportCreate, UserReportRead
+from app.database.schemas import Coordinate, UserReportCreate, UserReportRead
 from app.utils.security import InvalidTokenError, decode_access_token
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -20,6 +22,20 @@ def optional_user_id(authorization: str | None = Header(default=None)) -> uuid.U
         return uuid.UUID(str(decode_access_token(authorization[7:]).get("sub")))
     except (InvalidTokenError, ValueError, TypeError):
         return None
+
+
+def _report_to_read(report: Any) -> UserReportRead:
+    """Convert DB model (with WKBElement) to UserReportRead (with Coordinate)."""
+    geom = to_shape(report.location)
+    return UserReportRead(
+        id=report.id,
+        user_id=report.user_id,
+        location=Coordinate(lat=geom.y, lon=geom.x),
+        report_type=report.report_type,
+        description=report.description,
+        created_at=report.created_at,
+        status=report.status,
+    )
 
 
 @router.post(
@@ -36,7 +52,7 @@ async def create_report(
 ) -> UserReportRead:
     item = await UserReportRepository(db).create(payload, user_id)
     await db.commit()
-    return UserReportRead.model_validate(item)
+    return _report_to_read(item)
 
 
 # Alias for backward compatibility - /report (singular)
@@ -71,4 +87,4 @@ async def get_nearby_reports(
     repo = UserReportRepository(db)
     reports = await repo.find_near(Coordinate(lat=lat, lon=lon), radius_m)
     active = [r for r in reports if r.status.value == "active"]
-    return [UserReportRead.model_validate(r) for r in active]
+    return [_report_to_read(r) for r in active]
