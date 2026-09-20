@@ -58,10 +58,13 @@ class OSMService:
     async def query_features(self, bbox: tuple[float, float, float, float]) -> list[dict[str, Any]]:
         south, west, north, east = bbox
         query = f'[out:json][timeout:{self.settings.overpass_timeout_seconds}];(way["highway"]({south},{west},{north},{east});node["highway"="crossing"]({south},{west},{north},{east});node["man_made"="street_lamp"]({south},{west},{north},{east}););out geom;'
+        # Overpass requires Accept header for JSON response
+        headers = {"Accept": "application/json"}
         data = await get_json(
             await self._http(),
             self.settings.overpass_base_url,
             params={"data": query},
+            headers=headers,
             retries=self.settings.http_max_retries,
         )
         return data.get("elements", [])

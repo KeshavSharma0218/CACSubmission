@@ -37,6 +37,11 @@ from app.utils.config import Settings, get_settings
 from app.utils.http_client import UpstreamServiceError
 
 
+def _clamp(value: float) -> float:
+    """Clamp value to [0, 1] range."""
+    return max(0.0, min(1.0, value))
+
+
 class RouteSafetyService:
     """Combine normalized factors into an explainable score in the range [0, 1]."""
 
@@ -212,20 +217,21 @@ class RouteSafetyService:
             in {ReportType.unsafe_activity, ReportType.aggressive_animal}
             for report in reports
         )
+        # All scores clamped to [0, 1]
         return {
-            "crime": max(0.0, 1.0 - min(crime_count, 20) / 20),
-            "lighting": lighting,
-            "sidewalk": sidewalk,
-            "crosswalk": min(1.0, 0.5 + crossings / 10),
-            "road_type": road_type,
-            "time_of_day": 1.0 if 6 <= at_time.hour < 20 else (0.75 if lighting >= 0.7 else 0.35),
-            "weather": max(0.0, 1.0 - weather.severity),
-            "traffic": max(0.0, 1.0 - traffic.level),
-            "air_quality": air_quality.aqi,
-            "transit_proximity": transit.score,
-            "civic_issues": civic.score,
-            "flood_risk": flood.score,
-            "user_reports": max(0.0, 1.0 - min(active_reports + severe_reports, 10) / 10),
+            "crime": _clamp(1.0 - min(crime_count, 20) / 20),
+            "lighting": _clamp(lighting),
+            "sidewalk": _clamp(sidewalk),
+            "crosswalk": _clamp(min(1.0, 0.5 + crossings / 10)),  # Was missing clamp
+            "road_type": _clamp(road_type),
+            "time_of_day": _clamp(1.0 if 6 <= at_time.hour < 20 else (0.75 if lighting >= 0.7 else 0.35)),
+            "weather": _clamp(1.0 - weather.severity),
+            "traffic": _clamp(1.0 - traffic.level),
+            "air_quality": _clamp(air_quality.aqi),
+            "transit_proximity": _clamp(transit.score),
+            "civic_issues": _clamp(civic.score),
+            "flood_risk": _clamp(flood.score),
+            "user_reports": _clamp(1.0 - min(active_reports + severe_reports, 10) / 10),
         }
 
     @staticmethod
