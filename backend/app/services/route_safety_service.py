@@ -51,7 +51,6 @@ class RouteSafetyService:
         "sidewalk": 0.15,
         "crosswalk": 0.07,
         "road_type": 0.08,
-        "time_of_day": 0.07,
         "weather": 0.06,
         "traffic": 0.06,
         "air_quality": 0.05,
@@ -93,6 +92,18 @@ class RouteSafetyService:
         self.civic = civic or create_civic_provider(self.settings)
         self.flood = flood or create_flood_provider(self.settings)
 
+    def _lighting_weight(self, at_time: datetime) -> float:
+        """Dynamic lighting weight: 0 during day, higher at night."""
+        hour = at_time.hour
+        # Night: 8 PM (20) to 6 AM (6)
+        if hour >= 20 or hour < 6:
+            return 0.30  # Double the base weight at night
+        return 0.0  # No impact during daylight hours
+
+    def _is_night(self, at_time: datetime) -> bool:
+        hour = at_time.hour
+        return hour >= 20 or hour < 6
+
     async def score_route(self, route: RouteResult, at_time: datetime) -> RouteResult:
         if not route.coordinates:
             return route
@@ -102,6 +113,14 @@ class RouteSafetyService:
             10_000.0,
             max(self.settings.route_safety_corridor_m, self._route_radius(route.coordinates)),
         )
+        # Dynamic lighting weight based on time of day
+        lighting_weight = self._lighting_weight(at_time)
+        is_night = self._is_night(at_time)
+
+        # Build dynamic weights: lighting varies by time, time_of_day removed
+        dynamic_weights = dict(self.weights)
+        dynamic_weights["lighting"] = lighting_weight
+
         # Fetch all safety data concurrently
         features, weather, crimes, reports = await asyncio.gather(
             self._optional(self.osm.query_features(bbox), []),
@@ -126,14 +145,14 @@ class RouteSafetyService:
         )
         # Compute all factor scores
         breakdown = self._factor_scores(
-            features, weather, len(crimes), reports, at_time,
-            traffic, air_quality, transit, civic, flood
+            features, weather, len(crimes), reports,
+            traffic, air_quality, transit, civic, flood,
         )
         route.factor_breakdown = breakdown
         route.safety_score = round(
-            sum(breakdown[name] * weight for name, weight in self.weights.items()), 3
+            sum(breakdown[name] * weight for name, weight in dynamic_weights.items()), 3
         )
-        route.warnings = self._warnings(breakdown)
+        route.warnings = self._warnings(breakdown, is_night)
         return route
 
     @staticmethod
@@ -174,7 +193,6 @@ class RouteSafetyService:
         weather,
         crime_count,
         reports,
-        at_time,
         traffic: TrafficConditions,
         air_quality: AirQualityConditions,
         transit: TransitConditions,
@@ -222,9 +240,8 @@ class RouteSafetyService:
             "crime": _clamp(1.0 - min(crime_count, 20) / 20),
             "lighting": _clamp(lighting),
             "sidewalk": _clamp(sidewalk),
-            "crosswalk": _clamp(min(1.0, 0.5 + crossings / 10)),  # Was missing clamp
+            "crosswalk": _clamp(min(1.0, 0.5 + crossings / 10)),
             "road_type": _clamp(road_type),
-            "time_of_day": _clamp(1.0 if 6 <= at_time.hour < 20 else (0.75 if lighting >= 0.7 else 0.35)),
             "weather": _clamp(1.0 - weather.severity),
             "traffic": _clamp(1.0 - traffic.level),
             "air_quality": _clamp(air_quality.aqi),
@@ -235,7 +252,7 @@ class RouteSafetyService:
         }
 
     @staticmethod
-    def _warnings(scores: dict[str, float]) -> list[str]:
+    def _warnings(scores: dict[str, float], is_night: bool) -> list[str]:
         labels = {
             "crime": "Recent crime activity was reported near this route.",
             "lighting": "Parts of this route may have limited lighting.",
@@ -249,4 +266,8 @@ class RouteSafetyService:
             "flood_risk": "Route passes through a flood-prone area.",
             "user_reports": "Active community hazards were reported near this route.",
         }
-        return [message for name, message in labels.items() if scores[name] < 0.5]
+        return [
+            message
+            for name, message in labels.items()
+            if scores[name] < 0.5 and not (name == "lighting" and not is_night)
+        ]
