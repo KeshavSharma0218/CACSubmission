@@ -85,7 +85,7 @@ class RouteSafetyService:
         from app.services.transit_service import create_transit_provider
         from app.services.civic_service import create_civic_provider
         from app.services.flood_service import create_flood_provider
-        
+
         self.traffic = traffic or create_traffic_provider(self.settings)
         self.air_quality = air_quality or create_air_quality_provider(self.settings)
         self.transit = transit or create_transit_provider(self.settings)
@@ -149,9 +149,11 @@ class RouteSafetyService:
             traffic, air_quality, transit, civic, flood,
         )
         route.factor_breakdown = breakdown
-        route.safety_score = round(
-            sum(breakdown[name] * weight for name, weight in dynamic_weights.items()), 3
+        # Calculate weighted sum, then clamp to [0, 1]
+        raw_score = sum(
+            breakdown[name] * weight for name, weight in dynamic_weights.items()
         )
+        route.safety_score = round(_clamp(raw_score), 3)
         route.warnings = self._warnings(breakdown, is_night)
         return route
 

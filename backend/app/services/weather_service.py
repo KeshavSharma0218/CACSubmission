@@ -35,6 +35,7 @@ class NWSWeatherProvider(WeatherProvider):
         self.client = client or httpx.AsyncClient(
             timeout=settings.http_timeout_seconds,
             headers={"User-Agent": settings.nominatim_user_agent},
+            follow_redirects=True,  # Follow 301 redirects from weather.gov
         )
 
     async def get_conditions(self, location: Coordinate, at_time: datetime) -> WeatherConditions:
