@@ -1,19 +1,20 @@
-"""Flood zone data from FEMA National Flood Hazard Layer (NFHL).
+"""Flood risk data from FEMA OpenFEMA API (free, no API key required).
 
-Sources:
-- FEMA NFHL WMS/REST API (free)
-- FEMA Flood Map Service Center
+OpenFEMA provides disaster declaration data at https://www.fema.gov/api/open
+No subscription or API key is needed per FEMA documentation.
+
+Falls back to neutral conditions when API is unavailable.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 
 from app.database.schemas import Coordinate
 from app.utils.config import Settings, get_settings
-from app.utils.http_client import get_json
+from app.utils.http_client import UpstreamServiceError, get_json
 
 
 @dataclass(slots=True)
@@ -31,11 +32,15 @@ class FloodProvider(ABC):
     async def get_conditions(self, location: Coordinate, at_time: datetime) -> FloodConditions: ...
 
 
-class FEMANFHLProvider(FloodProvider):
-    """Query FEMA NFHL for flood zone at a coordinate."""
+class OpenFEMADisasterProvider(FloodProvider):
+    """Query FEMA OpenFEMA for disaster declarations near a location.
 
-    # FEMA NFHL REST endpoint
-    BASE_URL = "https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer"
+    Uses DisasterDeclarationsSummaries entity to find recent flood-related
+    disaster declarations. Returns elevated risk if there are recent flood
+    declarations in the area.
+    """
+
+    BASE_URL = "https://www.fema.gov/api/open/v2"
 
     def __init__(self, settings: Settings | None = None, client: httpx.AsyncClient | None = None):
         self.settings = settings or get_settings()
@@ -43,57 +48,95 @@ class FEMANFHLProvider(FloodProvider):
 
     async def get_conditions(self, location: Coordinate, at_time: datetime) -> FloodConditions:
         try:
-            # Query NFHL Identify endpoint for flood zone at point
+            # Get state from reverse geocode to filter declarations by state
+            state = await self._get_state_from_coords(location)
+
+            # Build OData filter for recent flood declarations
+            # Look at declarations in the last 2 years
+            two_years_ago = (at_time - timedelta(days=730)).strftime("%Y-%m-%d")
+
+            if state:
+                filter_str = (
+                    f"incidentType eq 'Flood' and declarationDate ge "
+                    f"'{two_years_ago}' and state eq '{state}'"
+                )
+            else:
+                filter_str = (
+                    f"incidentType eq 'Flood' and declarationDate ge "
+                    f"'{two_years_ago}'"
+                )
+
             params = {
-                "geometry": f"{location.lon},{location.lat}",
-                "geometryType": "esriGeometryPoint",
-                "sr": 4326,
-                "layers": "all",
-                "tolerance": 10,
-                "mapExtent": f"{location.lon - 0.01},{location.lat - 0.01},{location.lon + 0.01},{location.lat + 0.01}",
-                "imageDisplay": "400,400,96",
-                "returnGeometry": "false",
-                "f": "json",
+                "$filter": filter_str,
+                "$top": 50,
+                "$format": "json",
             }
 
             data = await get_json(
                 self.client,
-                f"{self.BASE_URL}/identify",
+                f"{self.BASE_URL}/DisasterDeclarationsSummaries",
                 params=params,
                 retries=self.settings.http_max_retries,
             )
 
-            results = data.get("results", [])
-            if not results:
-                return FloodConditions(1.0, "fema", "no data", False)
+            declarations = data.get("DisasterDeclarationsSummaries", [])
+            count = len(declarations)
 
-            # Check for flood hazard layers
-            flood_zones = []
-            for result in results:
-                layer_name = result.get("layerName", "").lower()
-                if "flood" in layer_name or "sfha" in layer_name or "zone" in layer_name:
-                    attrs = result.get("attributes", {})
-                    zone = attrs.get("ZONE_SUBTY") or attrs.get("FLD_ZONE") or attrs.get("ZONE")
-                    if zone:
-                        flood_zones.append(zone)
+            if count == 0:
+                return FloodConditions(1.0, "fema", "no recent flood declarations", False)
 
-            if not flood_zones:
-                return FloodConditions(1.0, "fema", "zone_x", False)
+            # More recent declarations = higher risk
+            # Count declarations in the last year
+            one_year_ago = at_time - timedelta(days=365)
+            recent_count = 0
+            for decl in declarations:
+                decl_date_str = decl.get("declarationDate", "")
+                try:
+                    decl_date = datetime.fromisoformat(decl_date_str.replace("Z", "+00:00"))
+                    if decl_date.replace(tzinfo=None) > one_year_ago:
+                        recent_count += 1
+                except (ValueError, AttributeError):
+                    continue
 
-            # Determine risk from zone
-            zone_str = ", ".join(set(flood_zones))
-            high_risk = any(z in zone_str for z in ["a", "ae", "ao", "ah", "ve", "v"])
-            moderate_risk = any(z in zone_str for z in ["x500", "0.2 pct"])
+            if recent_count >= 3:
+                score = 0.3  # High risk - frequent flooding
+                zone = "frequent"
+            elif recent_count >= 1:
+                score = 0.6  # Moderate risk - some flooding
+                zone = "occasional"
+            else:
+                score = 0.9  # Low risk - older declarations only
+                zone = "historical"
 
-            if high_risk:
-                return FloodConditions(0.2, "fema", zone_str, True)
-            elif moderate_risk:
-                return FloodConditions(0.6, "fema", zone_str, True)
+            return FloodConditions(
+                score,
+                "fema",
+                f"{zone}_flooding ({count} declarations)",
+                recent_count > 0,
+            )
 
-            return FloodConditions(0.9, "fema", zone_str, False)
+        except (UpstreamServiceError, httpx.HTTPError, ValueError, KeyError):
+            # OpenFEMA unavailable - return neutral
+            return FloodConditions(0.8, "fema", "service unavailable", False)
 
-        except (httpx.HTTPError, ValueError, KeyError):
-            return FloodConditions(0.8, "fema", "query failed", False)
+    async def _get_state_from_coords(self, location: Coordinate) -> str | None:
+        """Use reverse geocoding to get the state abbreviation."""
+        try:
+            data = await get_json(
+                self.client,
+                "https://nominatim.openstreetmap.org/reverse",
+                params={
+                    "lat": location.lat,
+                    "lon": location.lon,
+                    "format": "jsonv2",
+                },
+                headers={"User-Agent": self.settings.nominatim_user_agent},
+                retries=1,
+            )
+            address = data.get("address", {})
+            return address.get("state_code") or address.get("state")
+        except (UpstreamServiceError, httpx.HTTPError, ValueError, KeyError):
+            return None
 
 
 class NullFloodProvider(FloodProvider):
@@ -103,5 +146,4 @@ class NullFloodProvider(FloodProvider):
 
 def create_flood_provider(settings: Settings | None = None) -> FloodProvider:
     settings = settings or get_settings()
-    # Could add config flag for flood data
-    return FEMANFHLProvider(settings)
+    return OpenFEMADisasterProvider(settings)

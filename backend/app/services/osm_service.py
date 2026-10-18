@@ -12,11 +12,11 @@ from app.utils.http_client import UpstreamServiceError, get_json
 
 
 class OSMService:
-    # Multiple Overpass instances for fallback
+    # Multiple Overpass instances for fallback (ordered by reliability)
     OVERPASS_INSTANCES = [
-        "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
         "https://overpass.nchc.org.tw/api/interpreter",
+        "https://overpass-api.de/api/interpreter",
     ]
 
     def __init__(self, settings: Settings | None = None, client: httpx.AsyncClient | None = None):
@@ -78,7 +78,11 @@ class OSMService:
                     headers=headers,
                     retries=self.settings.http_max_retries,
                 )
-                return data.get("elements", [])
+                elements = data.get("elements", [])
+                if elements:
+                    return elements
+                # Empty result but no error - try next instance
+                last_error = UpstreamServiceError("Empty Overpass response")
             except UpstreamServiceError as exc:
                 last_error = exc
                 continue  # Try next instance

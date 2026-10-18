@@ -1,7 +1,9 @@
-"""Air quality data from OpenAQ (free, no API key) and EPA AirNow.
+"""Air quality data from OpenAQ v3 API (requires API key).
 
-OpenAQ v2 is deprecated (returns 410 Gone). Falls back to neutral conditions
-when the API is unavailable.
+OpenAQ v2 is deprecated (returns 410 Gone). v3 requires an API key.
+Get your free key at: https://docs.openaq.org/
+
+Falls back to neutral conditions when API is unavailable or key is missing.
 """
 
 from abc import ABC, abstractmethod
@@ -33,21 +35,23 @@ class AirQualityProvider(ABC):
 
 
 class OpenAQProvider(AirQualityProvider):
-    """Fetch air quality from OpenAQ API (free, no key).
+    """Fetch air quality from OpenAQ v3 API (requires API key)."""
 
-    Note: OpenAQ v2 API is deprecated (returns 410 Gone).
-    Falls back to neutral conditions when unavailable.
-    """
-
-    BASE_URL = "https://api.openaq.org/v2"
+    BASE_URL = "https://api.openaq.org/v3"
 
     def __init__(self, settings: Settings | None = None, client: httpx.AsyncClient | None = None):
         self.settings = settings or get_settings()
+        self.api_key = settings.air_quality_api_key
         self.client = client or httpx.AsyncClient(timeout=self.settings.http_timeout_seconds)
 
     async def get_conditions(self, location: Coordinate, at_time: datetime) -> AirQualityConditions:
+        if not self.api_key:
+            # No API key configured - return neutral
+            return AirQualityConditions(0.5, "openaq", "no api key")
+
         try:
             # Find nearest measurement location
+            headers = {"X-API-Key": self.api_key}
             params = {
                 "coordinates": f"{location.lat},{location.lon}",
                 "radius": 10000,  # 10km
@@ -58,30 +62,33 @@ class OpenAQProvider(AirQualityProvider):
                 self.client,
                 f"{self.BASE_URL}/locations",
                 params=params,
+                headers=headers,
                 retries=self.settings.http_max_retries,
             )
 
-            if not data.get("results"):
+            results = data.get("results", [])
+            if not results:
                 return AirQualityConditions(0.7, "openaq", "no nearby station")
 
-            location_id = data["results"][0]["id"]
+            location_id = results[0]["id"]
 
             # Get latest measurements
             meas_data = await get_json(
                 self.client,
-                f"{self.BASE_URL}/latest",
-                params={"location_id": location_id, "limit": 10},
+                f"{self.BASE_URL}/locations/{location_id}/latest",
+                headers=headers,
                 retries=self.settings.http_max_retries,
             )
 
-            if not meas_data.get("results"):
+            measurements = meas_data.get("results", [])
+            if not measurements:
                 return AirQualityConditions(0.7, "openaq", "no recent measurements")
 
             # Calculate US AQI from PM2.5 if available
             pm25 = None
-            for meas in meas_data["results"][0].get("measurements", []):
-                if meas["parameter"] == "pm25":
-                    pm25 = meas["value"]
+            for meas in measurements:
+                if meas.get("parameter") == "pm25":
+                    pm25 = meas.get("value")
                     break
 
             if pm25 is not None:
@@ -97,7 +104,7 @@ class OpenAQProvider(AirQualityProvider):
             return AirQualityConditions(0.7, "openaq", "no pm25 data")
 
         except (UpstreamServiceError, httpx.HTTPError, ValueError, KeyError):
-            # OpenAQ v2 is deprecated - return neutral
+            # OpenAQ API error - return neutral
             return AirQualityConditions(0.5, "openaq", "service unavailable")
 
     @staticmethod
@@ -125,6 +132,6 @@ class NullAirQualityProvider(AirQualityProvider):
 
 def create_air_quality_provider(settings: Settings | None = None) -> AirQualityProvider:
     settings = settings or get_settings()
-    if settings.weather_provider == "nws":  # Reuse weather_provider flag for now
+    if settings.air_quality_provider == "openaq":
         return OpenAQProvider(settings)
     return NullAirQualityProvider()

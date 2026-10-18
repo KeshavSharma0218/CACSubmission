@@ -1,11 +1,13 @@
 """Transit proximity data - safer near transit stops/stations.
 
 Sources:
-- TransitLand API (now requires API key, returns 401 without one)
+- TransitLand API (requires API key now): https://transit.land/
 - GTFS feeds from local agencies
 - OpenMobilityData
 
-Falls back to neutral conditions when API is unavailable.
+Get your free key at: https://transit.land/documentation/#api-keys
+
+Falls back to neutral conditions when API is unavailable or key is missing.
 """
 
 from abc import ABC, abstractmethod
@@ -45,18 +47,20 @@ class TransitProvider(ABC):
 
 
 class TransitLandProvider(TransitProvider):
-    """Fetch transit stops from TransitLand API (now requires API key).
-
-    Falls back to neutral proximity score when unavailable.
-    """
+    """Fetch transit stops from TransitLand API (requires API key)."""
 
     BASE_URL = "https://transit.land/api/v2/rest"
 
     def __init__(self, settings: Settings | None = None, client: httpx.AsyncClient | None = None):
         self.settings = settings or get_settings()
+        self.api_key = settings.transit_api_key
         self.client = client or httpx.AsyncClient(timeout=self.settings.http_timeout_seconds)
 
     async def get_proximity(self, location: Coordinate, at_time: datetime) -> TransitProximity:
+        if not self.api_key:
+            # No API key configured - return neutral
+            return TransitProximity(0.5, "transitland", None, 0)
+
         try:
             # Search for stops near location
             params = {
@@ -64,6 +68,7 @@ class TransitLandProvider(TransitProvider):
                 "lon": location.lon,
                 "r": 1000,  # 1km radius
                 "per_page": 50,
+                "apikey": self.api_key,
             }
             data = await get_json(
                 self.client,
@@ -108,7 +113,7 @@ class TransitLandProvider(TransitProvider):
             return TransitProximity(score, "transitland", min_dist, count_500m)
 
         except (UpstreamServiceError, httpx.HTTPError, ValueError, KeyError):
-            # Transit.land requires API key now - return neutral
+            # Transit.land API error - return neutral
             return TransitProximity(0.5, "transitland", None, 0)
 
 

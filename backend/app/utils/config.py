@@ -77,9 +77,11 @@ class Settings(BaseSettings):
 
     # --- Air quality -----------------------------------------------------
     air_quality_provider: Literal["none", "openaq"] = "openaq"
+    air_quality_api_key: str | None = None
 
     # --- Transit proximity -----------------------------------------------
     transit_provider: Literal["none", "transitland"] = "transitland"
+    transit_api_key: str | None = None
 
     # --- Civic/311 data --------------------------------------------------
     civic_data_provider: Literal["none", "socrata"] = "none"
