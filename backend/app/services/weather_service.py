@@ -8,7 +8,7 @@ import httpx
 
 from app.database.schemas import Coordinate
 from app.utils.config import Settings, get_settings
-from app.utils.http_client import get_json
+from app.utils.http_client import UpstreamServiceError, get_json
 
 
 @dataclass(slots=True)
@@ -38,19 +38,25 @@ class NWSWeatherProvider(WeatherProvider):
         )
 
     async def get_conditions(self, location: Coordinate, at_time: datetime) -> WeatherConditions:
-        point = await get_json(
-            self.client,
-            f"https://api.weather.gov/points/{location.lat},{location.lon}",
-            retries=self.settings.http_max_retries,
-        )
-        forecast = await get_json(
-            self.client,
-            point["properties"]["forecastHourly"],
-            retries=self.settings.http_max_retries,
-        )
-        text = forecast["properties"]["periods"][0].get("shortForecast", "")
-        severe = any(word in text.lower() for word in ("storm", "snow", "ice", "heavy rain"))
-        return WeatherConditions(0.5 if severe else 0.0, text or "neutral")
+        try:
+            # NWS points API may return redirects - follow them
+            point = await get_json(
+                self.client,
+                f"https://api.weather.gov/points/{location.lat},{location.lon}",
+                retries=self.settings.http_max_retries,
+            )
+            forecast_url = point["properties"]["forecastHourly"]
+            forecast = await get_json(
+                self.client,
+                forecast_url,
+                retries=self.settings.http_max_retries,
+            )
+            text = forecast["properties"]["periods"][0].get("shortForecast", "")
+            severe = any(word in text.lower() for word in ("storm", "snow", "ice", "heavy rain"))
+            return WeatherConditions(0.5 if severe else 0.0, text or "neutral")
+        except (UpstreamServiceError, httpx.HTTPError, ValueError, KeyError):
+            # Weather is optional - return neutral if unavailable
+            return WeatherConditions()
 
 
 def create_weather_provider(settings: Settings | None = None) -> WeatherProvider:

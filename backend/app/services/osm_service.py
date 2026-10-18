@@ -8,10 +8,17 @@ import httpx
 
 from app.database.schemas import Coordinate
 from app.utils.config import Settings, get_settings
-from app.utils.http_client import get_json
+from app.utils.http_client import UpstreamServiceError, get_json
 
 
 class OSMService:
+    # Multiple Overpass instances for fallback
+    OVERPASS_INSTANCES = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.nchc.org.tw/api/interpreter",
+    ]
+
     def __init__(self, settings: Settings | None = None, client: httpx.AsyncClient | None = None):
         self.settings = settings or get_settings()
         self._client = client
@@ -60,11 +67,21 @@ class OSMService:
         query = f'[out:json][timeout:{self.settings.overpass_timeout_seconds}];(way["highway"]({south},{west},{north},{east});node["highway"="crossing"]({south},{west},{north},{east});node["man_made"="street_lamp"]({south},{west},{north},{east}););out geom;'
         # Overpass requires Accept header for JSON response
         headers = {"Accept": "application/json"}
-        data = await get_json(
-            await self._http(),
-            self.settings.overpass_base_url,
-            params={"data": query},
-            headers=headers,
-            retries=self.settings.http_max_retries,
-        )
-        return data.get("elements", [])
+
+        last_error = None
+        for base_url in self.OVERPASS_INSTANCES:
+            try:
+                data = await get_json(
+                    await self._http(),
+                    base_url,
+                    params={"data": query},
+                    headers=headers,
+                    retries=self.settings.http_max_retries,
+                )
+                return data.get("elements", [])
+            except UpstreamServiceError as exc:
+                last_error = exc
+                continue  # Try next instance
+
+        # All instances failed - return empty instead of crashing
+        return []

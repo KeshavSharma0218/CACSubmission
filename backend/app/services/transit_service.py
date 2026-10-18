@@ -1,9 +1,11 @@
 """Transit proximity data - safer near transit stops/stations.
 
 Sources:
-- TransitLand API (free, no key): https://transit.land/
+- TransitLand API (now requires API key, returns 401 without one)
 - GTFS feeds from local agencies
 - OpenMobilityData
+
+Falls back to neutral conditions when API is unavailable.
 """
 
 from abc import ABC, abstractmethod
@@ -14,7 +16,7 @@ import httpx
 
 from app.database.schemas import Coordinate
 from app.utils.config import Settings, get_settings
-from app.utils.http_client import get_json
+from app.utils.http_client import UpstreamServiceError, get_json
 
 
 @dataclass(slots=True)
@@ -43,7 +45,10 @@ class TransitProvider(ABC):
 
 
 class TransitLandProvider(TransitProvider):
-    """Fetch transit stops from TransitLand API (free)."""
+    """Fetch transit stops from TransitLand API (now requires API key).
+
+    Falls back to neutral proximity score when unavailable.
+    """
 
     BASE_URL = "https://transit.land/api/v2/rest"
 
@@ -102,7 +107,8 @@ class TransitLandProvider(TransitProvider):
 
             return TransitProximity(score, "transitland", min_dist, count_500m)
 
-        except (httpx.HTTPError, ValueError, KeyError):
+        except (UpstreamServiceError, httpx.HTTPError, ValueError, KeyError):
+            # Transit.land requires API key now - return neutral
             return TransitProximity(0.5, "transitland", None, 0)
 
 

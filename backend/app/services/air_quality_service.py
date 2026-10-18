@@ -1,7 +1,7 @@
 """Air quality data from OpenAQ (free, no API key) and EPA AirNow.
 
-OpenAQ: https://openaq.org/ - free tier, no key required for basic queries
-EPA AirNow: https://airnow.gov/ - requires API key for full access
+OpenAQ v2 is deprecated (returns 410 Gone). Falls back to neutral conditions
+when the API is unavailable.
 """
 
 from abc import ABC, abstractmethod
@@ -12,7 +12,7 @@ import httpx
 
 from app.database.schemas import Coordinate
 from app.utils.config import Settings, get_settings
-from app.utils.http_client import get_json
+from app.utils.http_client import UpstreamServiceError, get_json
 
 
 @dataclass(slots=True)
@@ -33,7 +33,11 @@ class AirQualityProvider(ABC):
 
 
 class OpenAQProvider(AirQualityProvider):
-    """Fetch air quality from OpenAQ API (free, no key)."""
+    """Fetch air quality from OpenAQ API (free, no key).
+
+    Note: OpenAQ v2 API is deprecated (returns 410 Gone).
+    Falls back to neutral conditions when unavailable.
+    """
 
     BASE_URL = "https://api.openaq.org/v2"
 
@@ -92,8 +96,9 @@ class OpenAQProvider(AirQualityProvider):
 
             return AirQualityConditions(0.7, "openaq", "no pm25 data")
 
-        except (httpx.HTTPError, ValueError, KeyError):
-            return AirQualityConditions(0.5, "openaq", "fetch failed")
+        except (UpstreamServiceError, httpx.HTTPError, ValueError, KeyError):
+            # OpenAQ v2 is deprecated - return neutral
+            return AirQualityConditions(0.5, "openaq", "service unavailable")
 
     @staticmethod
     def _pm25_to_aqi(pm25: float) -> float:
