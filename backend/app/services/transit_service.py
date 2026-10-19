@@ -66,7 +66,7 @@ class TransitLandProvider(TransitProvider):
             params = {
                 "lat": location.lat,
                 "lon": location.lon,
-                "r": 1000,  # 1km radius
+                "r": 10000,  # 1km radius
                 "per_page": 50,
                 "apikey": self.api_key,
             }
@@ -99,13 +99,13 @@ class TransitLandProvider(TransitProvider):
             count_500m = sum(1 for d in distances if d <= 500)
 
             # Score: closer = safer (more people, better lighting, more eyes)
-            if min_dist <= 100:
+            if min_dist <= 750:
                 score = 1.0
-            elif min_dist <= 300:
-                score = 0.8
-            elif min_dist <= 500:
-                score = 0.6
             elif min_dist <= 1000:
+                score = 0.8
+            elif min_dist <= 3000:
+                score = 0.6
+            elif min_dist <= 5000:
                 score = 0.4
             else:
                 score = 0.2
