@@ -52,7 +52,7 @@ class OpenAQProvider(AirQualityProvider):
         try:
             headers = {"X-API-Key": self.api_key}
 
-            # Find nearest measurement location - v3 uses different params
+            # Find nearest measurement location - v3 API
             params = {
                 "coordinates": f"{location.lat},{location.lon}",
                 "radius": 10000,  # 10km in meters
@@ -72,11 +72,10 @@ class OpenAQProvider(AirQualityProvider):
 
             location_id = results[0]["id"]
 
-            # Get latest measurements - v3 endpoint is /v3/latest?locations={id}
+            # Get latest measurements - v3 uses /v3/locations/{id}/latest
             meas_data = await get_json(
                 self.client,
-                f"{self.BASE_URL}/latest",
-                params={"locations": location_id, "limit": 10},
+                f"{self.BASE_URL}/locations/{location_id}/latest",
                 headers=headers,
                 retries=self.settings.http_max_retries,
             )

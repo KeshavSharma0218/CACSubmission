@@ -14,9 +14,9 @@ from app.utils.http_client import UpstreamServiceError, get_json
 class OSMService:
     # Multiple Overpass instances for fallback (ordered by reliability)
     OVERPASS_INSTANCES = [
-        "https://overpass.kumi.systems/api/interpreter",
-        "https://overpass.nchc.org.tw/api/interpreter",
         "https://overpass-api.de/api/interpreter",
+        "https://overpass.nchc.org.tw/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
     ]
 
     def __init__(self, settings: Settings | None = None, client: httpx.AsyncClient | None = None):
